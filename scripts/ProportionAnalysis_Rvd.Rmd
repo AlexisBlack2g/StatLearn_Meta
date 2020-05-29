@@ -1,0 +1,172 @@
+---
+title: "ProportionBasedAnalysis_Rvd"
+author: "Alexis Black"
+date: "10/5/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Set up data
+```{r}
+#General set up:
+
+library(tidyverse)
+library(metafor)
+
+#load and prep the data
+source("scripts/calculateES.R")
+db <-
+  db %>% 
+  mutate(StimuliType = ifelse(test_lang_program=="natural", "1", "0")) %>% 
+  mutate(StimuliType = as.factor(StimuliType)) %>% 
+  mutate(age.C = mean_age_1-mean(mean_age_1, na.rm=TRUE)) %>% 
+  mutate(familiarization = familiarization_time-mean(familiarization_time, na.rm=TRUE)) %>% 
+  rename(gender = gender_1)
+db$collapse <- paste(db$study_ID, db$expt_num, db$same_infant, sep = "_")
+
+for(independent in unique(db$collapse)){
+  if(length(db[db$collapse==independent])>1){
+    sub = db[db$collapse==independent, ]
+    sub$d_calc <- median(sub$d_calc)
+    sub$d_var_calc <- median(sub$d_var_calc)
+    sub$g_calc <- median(sub$g_calc)
+    sub$g_var_calc <- median(sub$g_var_calc)
+    sub$corr_imputed <- median(sub$corr_imputed)
+    db <- db[!(db$collapse==independent),]
+    db <- rbind(db, sub[1,])
+  }
+}
+
+```
+
+##For some reason the 'collapse' code above is no longer working
+Not sure why - this will cause some issues with the data below, but continuing for the sake of exploring the code
+
+#Getting ready to look at proportions
+To look at data using proportions instead of mean difference effect sizes, this
+analysis uses the looking time data as a binary outcome measure: you either
+prefer the novel or you prefer the familiar items, but essentially, the *degree* to which you prefer these items is uninterpretable.
+
+Taken to an extreme, we could imagine a situation where each infant looked at 
+novel items 100 msec longer than familiar items; if all infants do so, it's a 
+robust effect.  It will, in fact, be equally robust across both analyses, 
+because the mean difference effect size depends on the sample variance.  These 
+analyses would differ, however, if the longer looking times were varied, but 
+most infants did look longer to the familiar items.  In this case, the
+proportional analysis could (?) yeild a stronger effect than the mean difference
+analysis
+
+First we create the variables we need. The data has been coded such that the
+proportion preference reflects the direction of preference reported in the
+study.  We need for these to reflect the different direction of preference
+scores.
+
+```{r}
+prop <-
+  db %>% 
+  mutate(n_E = ifelse(familiarity=="novelty", proportion_preference*n_1,
+                      n_1-(proportion_preference*n_1))) %>% 
+  filter(n_E>0)
+
+#fix the missing values in the cue_conflict column for later
+prop$cue_conflict_TP[prop$cue_conflict_TP == ""] <- "no"
+
+#Calculate Proportion based effect size (not necessary for running the models, but good for plotting)
+prop <- escalc(measure="PLO", xi=n_E, ni=n_1, data=prop)
+prop$se = sqrt(prop$vi)
+prop$lowerci = (-1.96*prop$se)+prop$yi
+prop$upperci = (1.96*prop$se)+prop$yi
+```
+
+The meta-analysis function from metafor can now perform the necessary calculations
+
+We use the binomial-normal model, instead of normal-normal (see Stijnen et al., 2010)
+
+```{r}
+#Version 1
+prop_rma <- rma.glmm(measure="PLO", xi=as.integer(n_E), ni=n_1, data=prop) #this yields a warning
+summary(prop_rma)
+predict(prop_rma, transf=transf.ilogit, digits=3)
+```
+
+In other words, there is a 54% incidence of a novelty preference in SL tasks;
+i.e. 4% above and beyond what you would expect by chance alone.  This is the
+more conservative estimate, given the error produced by the binomial-normal
+model (but the values produced are nearly identical).
+
+Let's look at the direct replications
+```{r}
+prop_DR_rma <- rma.glmm(measure="PLO", xi=as.integer(n_E), ni=n_1, data=subset(prop, DirectRep == "yes")) #this yields a warning
+summary(prop_DR_rma)
+predict(prop_DR_rma, transf=transf.ilogit, digits=3)
+```
+Apparently worse results than we get under the normal assumptions (i.e. t-tests of mean LTs).
+
+Only 57% chance; not significant.
+
+Let's plot this to see if we understand what's happening.
+
+```{r}
+apatheme=theme_bw()+
+  theme(#panel.grid.major=element_blank(),
+        #panel.grid.minor=element_blank(),
+        #panel.border=element_blank(),
+        axis.line=element_line(),
+        text=element_text(family='Times', size=20))
+        
+   #     legend.position='none')
+
+prop <-
+  prop %>% 
+  mutate(study_ref = paste(short_cite, expt_num, same_infant, sep=',')) %>% 
+  arrange(desc(yi))
+
+prop_DR <- subset(prop, DirectRep == "yes")
+
+ggplot(prop_DR, aes(y=reorder(study_ref, -yi), x=yi, xmin=lowerci, xmax=upperci))+
+  #Add data points and color them black
+  geom_point(color = "black")+
+  #add the CI error bars
+  geom_errorbarh(height=.1)+
+  #Specify the limits of the x-axis and relabel it to something more meaningful
+  #scale_x_continuous(limits=c(-1.0,1.5), name='Standardized Mean Difference (g)')+
+  #Give y-axis a meaningful label
+  ylab('Reference')+
+  #Add a vertical dashed line indicating an effect size of zero, for reference
+  geom_vline(xintercept=0, color='grey', linetype='dashed')+
+  #Add a vertical line to show mean effect
+  geom_vline(xintercept=0.28, color='black', linetype='dashed')+
+  #Create sub-plots (i.e., facets) based on levels of setting
+  #And allow them to have their own unique axes (so authors don't redundantly repeat)
+  #facet_grid(setting~., scales= 'free', space='free')+
+  #Apply my APA theme
+  apatheme
+```
+
+Error bars are huge; some of the effect sizes are also quite large - but with very low precision.
+
+Let's look at the whole dataset:
+```{r}
+ggplot(prop, aes(y=reorder(study_ref, -yi), x=yi, xmin=lowerci, xmax=upperci))+
+  #Add data points and color them black
+  geom_point(color = "black")+
+  #add the CI error bars
+  geom_errorbarh(height=.1)+
+  #Specify the limits of the x-axis and relabel it to something more meaningful
+  #scale_x_continuous(limits=c(-1.0,1.5), name='Standardized Mean Difference (g)')+
+  #Give y-axis a meaningful label
+  ylab('Reference')+
+  #Add a vertical dashed line indicating an effect size of zero, for reference
+  geom_vline(xintercept=0, color='grey', linetype='dashed')+
+  #Add a vertical line to show mean effect
+  geom_vline(xintercept=0.28, color='black', linetype='dashed')+
+  #Create sub-plots (i.e., facets) based on levels of setting
+  #And allow them to have their own unique axes (so authors don't redundantly repeat)
+  #facet_grid(setting~., scales= 'free', space='free')+
+  #Apply my APA theme
+  apatheme
+```
+

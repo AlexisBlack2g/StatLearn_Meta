@@ -1,0 +1,502 @@
+---
+title             : "Can infants use statistics to detect words in artificial speech? A meta-analytic answer and new questions."
+shorttitle        : "Infant statistical segmentation meta-analysis"
+
+author: 
+  - name          : "Alexis K. Black"
+    affiliation   : "1,2"
+    corresponding : yes    # Define only one corresponding author
+    address       : "2177 Wesbrook Ave.; Vancouver, BC, V6T0K3"
+    email         : "alexis.black@audiospeech.ubc.ca"
+  - name          : "Christina Bergmann"
+    affiliation   : "3"
+
+affiliation:
+  - id            : "1"
+    institution   : "University of British Columbia"
+  - id            : "2"
+    institution   : "Haskins Laboratories"
+  - id            : "3"
+    institution   : "Max Planck Institute for Psycholinguistics, Nijmegen"
+
+authornote: |
+  Haskins Laboratories.
+
+  Max Planck Institute for Psycholinguistics, Nijmegen.
+
+abstract: |
+  Early language learners face a monumental task: to detect relevant linguistic structure amidst an overwhelming amount of perceptual input. It has been suggested that infant learners solve this induction problem through a robust capacity for tracking statistical patterns. This hypothesis gained significant traction when a landmark study demonstrated that infants can use differential transitional probabilities between sounds to detect words in continuous speech with minimal exposure. We review the literature that has replicated and expanded on this original finding, and use meta-analysis to evaluate the reliability and strength of the effect. The data reveal a significant and developmentally stable, but small, effect of statistical word segmentation. Literature-predicted moderators are not supported; however, we find learning effects are impacted by stimulus type. We argue these findings call for a reassessment of current standard testing practices, and open fundamental questions about the measures typically used to assess infant learning.
+  
+keywords          : "statistical learning, word segmentation, language acquisition, meta-analysis"
+wordcount         : "`r stringr::str_count(rmarkdown::metadata$abstract, '\\S+')`"
+
+bibliography      : 
+- r-references.bib
+- my-bib.bib
+
+csl               : nature.csl
+nocite            : '@*'
+
+floatsintext      : no
+figurelist        : no
+tablelist         : no
+footnotelist      : no
+linenumbers       : yes
+mask              : no
+draft             : no
+figsintext        : yes
+fig_caption       : yes
+
+documentclass     : "apa6"
+classoption       : "man, noextraspace"
+output            : papaja::apa6_docx
+appendix          : "Supplementary.Rmd"
+
+header-includes:
+  - \setlength{\parindent}{4em}
+  - \setlength{\parskip}{0em}
+  - \usepackage{pdflscape}
+  - \newcommand{\blandscape}{\begin{landscape}}
+  - \newcommand{\elandscape}{\end{landscape}}
+  - \usepackage{caption}
+  - \captionsetup[figure]{font=scriptsize}
+---
+
+```{r setup, include = FALSE, warning = FALSE}
+#for APA formatting
+library(papaja)
+#meta analysis
+library(metafor)
+#general data formatting
+library(tidyverse)
+#for references
+library(citr)
+
+#### Get data ####
+
+#run Effect-size script first
+source("scripts/calculateES_test.R")
+
+#### Some clean-up ####
+db <-
+  db %>% 
+  mutate(StimuliType = as.factor(ifelse(test_lang_program=="natural", "1", "0")),
+         age.C = as.numeric(scale(mean_age_1)),
+         FoilType = ifelse(ForwardTP_nonword > 0, "partword", "nonword"),
+         ThreeWayStim = ifelse(stimuli_type == "natural" & StimuliType == "1",
+                               "2",
+                               ifelse(StimuliType == "0", 
+                                      "0", "1")),
+         complexity = log10(((X.WordRepetitions*number_syllables)/
+           (familiarization_time*1000/duration_syllables))*familiarization_time))
+
+  #mutate(age.C = mean_age_1-mean(mean_age_1, na.rm=TRUE)) %>% 
+  #mutate(familiarization = familiarization_time-mean(familiarization_time, na.rm=TRUE)) %>% 
+  #rename(gender = gender_1) %>% 
+  #mutate(FoilType = ifelse(ForwardTP_nonword > 0, "partword", "nonword"))
+
+##Prepare for multi-level models
+db <-
+  db %>%
+    rowwise() %>%
+    mutate(mean_age = weighted.mean(c(mean_age_1, mean_age_2), c(n_1, n_2),
+                                    na.rm = TRUE),
+           n = mean(c(n_1, n_2), na.rm = TRUE),
+           same_infant_calc = paste(study_ID,same_infant)) %>%  
+    rownames_to_column("unique_row") %>%
+    ungroup()
+
+##Screen-check
+db <- db %>% filter(INCLUDE. == "yes")
+
+#Reorder bibliographic info based on value of g, so effect sizes can be plotted in descending order, and set up some more info for plots
+db <-
+  db %>% 
+  mutate(se = sqrt(g_var_calc), #Get standard errors from variances
+         lowerci = (-1.96 * se) + g_calc, #Calculate 95% CI values
+         upperci = (1.96 * se) + g_calc) %>% 
+  arrange(desc(g_calc))
+
+##Create column to filter out second row of within-subject designs
+db <-
+  db %>% 
+  mutate(UniqueStudy = as.factor(duplicated(same_infant_calc)))
+
+#Themes and plot
+apatheme=theme_bw()+
+  theme(#panel.grid.major=element_blank(),
+        #panel.grid.minor=element_blank(),
+        #panel.border=element_blank(),
+        axis.line=element_line(),
+        text=element_text(family='Times', size=20),
+        legend.position='none')
+
+##Number of studies with multiple rows
+
+## Conceptual Replications
+db_DR <-
+  db %>% 
+  filter(replication == "TRUE") %>% 
+  droplevels()
+
+##Summary data
+db_table <- 
+  db %>% 
+  mutate(Age = round(mean_age_months)) %>% 
+  group_by(short_cite, Source, Age, n_1) %>% 
+  summarise(N_studies = length(expt_num)) %>% 
+  arrange(Source)
+```
+
+```{r analysis-preferences}
+# Seed for random number generation
+set.seed(42)
+knitr::opts_chunk$set(cache.extra = knitr::rand_seed)
+```
+
+Learning is a lifelong phenomenon, and it is a topic of continued debate how humans extract information from their environment and construct abstract knowledge from it[@marcus2019deep]. One cue comes from the infancy literature. Twenty years ago a landmark study revealed that infants could quickly attune to and use the low-level statistics of an unfamiliar language to induce linguistic structure[@saffran1996statistical]. This phenomenon, termed statistical learning, has since become a cornerstone in theories of cognitive development and perceptual learning writ large[@aslin2017; @fiser2019common] and theories of language acquisition[@saffran2018infant] in particular. And the field is growing: a google scholar search for the keywords “statistical learning” and “language acquisition” yields nearly 9,400 hits^[As of January, 2020.], at a rate that has more than doubled since 2011. 
+
+As the statistical learning (henceforth SL) literature has grown, it has examined the breadth and extent of the phenomenon, its developmental trajectory, and its relationship to other aspects of cognition and perception. Statistically driven segmentation of a speech stream into word-like units (as in the original Saffran, Aslin, and Newport[@saffran1996statistical] study) has been demonstrated in diverse populations (neonates[@teinonen2009statistical]; the elderly[@palmer2018statistical]; children with autism spectrum disorder[@haebig2017statistical]) and across species (e.g., cotton top tamarins[@hauser2001segmentation]; rats[@toro2005statistical]). Early work suggested that SL is a domain-general capacity, operating similarly across visual[@fiser2002statistical], visuomotor[@hunt2010category], touch[@conway2005modality] and non-linguistic auditory[@saffran1999statistical] stimuli, with little evidence for developmental change[@saffran1997incidental]. While these conclusions have become more nuanced as the field has matured[@frost2015domain;@shufaniya2018statistical], the central claim that SL is a powerful, early-developing (or innate) ability that subserves the formation of perceptual[@turk2008multidimensional;@turk2009flexible;@baldwin2008segmenting] and linguistic[@noguchi2018emergence;@maye2002infant;@thompson2007statistical] categories has only continued to gain traction[@erickson2014]. This has significant consequences for language acquisition theory development, and practical applications of theory to real-world phenomena. For example, there is an increasing call to use SL as an indicator of individual differences and possible diagnostic tool[@jeste2015electrophysiological;@saffran2018statistical], as well as a mechanism to build on in the context of treatment[@plante2018learning].
+
+Numerous literature reviews have elegantly summarized and synthesized this literature[@aslin2012statistical;@erickson2015statistical;@aslin2017;@saffran2018infant;@frost2019statistical]. Future practical extensions of SL research as well as robust theory development, however, will additionally require quantitative assessment of the state of the field. In this manuscript, we address this need through meta-analysis of infant statistical learning. We restrict our analysis to statistical word segmentation studies, which derive from the original landmark work of Saffran, Aslin, and Newport[@saffran1996statistical] (henceforth SAN96), in order to evaluate the first and most well understood of the wide array of statistical learning paradigms. To begin, we briefly review the motivation behind SAN96, and the literature that has expanded on their findings.
+ 
+An early key task faced by the infant learner is to find word-level units in the ambient language. How do infants accopmlish this? Saffran, Aslin, and Newport[@saffran1996statistical] proposed the following: within any stream of speech, sounds (such as syllables) will occur with respect to each other at different frequencies. Syllables that occur within a word will have a tighter relationship than those that do not; this association might then permit infants to establish some initial groupings of, and hence boundaries between, sounds. The authors operationalized this relationship as that of transitional probability between syllables, i.e. the co-occurrence frequency of two syllables divided by the frequency of one of them, a statistical property later shown to occur in natural languages[@swingley2005statistical;@curtin_stress_2005]:
+
+\begin{center}
+$\frac{frequency (Syllable A + Syllable B)}{frequency (Syllable A)}$
+\end{center}  
+
+To test infants on their sensitivity to statistical structure in the input, SAN96 created an artificial language with four trisyllabic ‘words’ (e.g., *tupiro*, *golabu*, *padoti*, and *bidaku*). Infants were exposed to approximately two minutes of the artificial language, in which the four words repeated in semi-random order. Importantly, there were no acoustic cues or pauses that signaled word boundaries; rather, the only way to segment the language into its word-level units was to track the transitional probabilities (TPs) between syllables. Within words, syllable transitions were entirely predictive (TPs of 1.0), while the transition between two words was less predictive (TPs of 0.33).  
+
+After exposure to the artificial language, infants were tested for discrimination of the statistical pattern using the head-turn preference procedure[@nelson1995head] (see Appendix and Figure 1).  Infants heard trials with repeating lists of words (statistically coherent trisyllables from the language) and repeating lists of nonwords (trisyllables that had never occurred in that linear order, yielding syllable TPs of 0; Study 1), or part-words (trisyllables that had occurred in that linear order, but crossed a word boundary, yielding one syllable TP of 0.33; Study 2). The 8-month-old infants attended longer to the lower TP items compared to high TP items, thus demonstrating successful acquisition of the underlying statistical structure.  
+
+These initial findings have spurred a rich literature aimed at determining the extent of and constraints on word segmentation via statistical learning. Many of the extant manipulations can be categorized as relating to two major categories of infant research: change across development, and how input characteristics impact learning. We outline how these domains have been explored in the SL literature.  
+
+```{r paradigmFig, fig.cap = "Panel A displays an example head-turn preference procedure paradigm (image reproduced with permission from Gervain and Werker, 2013). Panel B shows an example artificial language stream, defined by transitional probabilities. Panel C reports the results of Saffran, Aslin, and Newport (adapted from Saffran, Aslin, and Newport, 1996).", out.width = "\\textwidth", fig.pos = "!h"}
+
+knitr::include_graphics("/Users/alexis/Dropbox/StatLearnDB/figures/Paradigm.pdf")
+
+```
+
+##Change across development 
+How cognitive capacities mature is critical to theories of language acquisition. Indeed, the impact of the word segmentation SL effect is in part spurred by the fact that it has been demonstrated both very early in life[@teinonen2009statistical], and with little apparent change into adulthood[@saffran1997incidental] (though not all agree[@shufaniya2018statistical]). It might therefore be expected that SL is invariant across infant development. However, looking-time preferences - the means by which SL is measured - are expected to shift across development. Standard models predict that infants attend longer to the novel/less familiar items at test when they have learned sufficiently from a given stimulus, but that they perseverate on the familiar items when earlier in the learning process[@hunter1988multifactor]. Less experienced/skillful infants (i.e. younger ones) are more likely to require more exposure to learn from the same stream of information than are more ‘expert’ listeners (i.e., older infants). Given the same complexity and duration of exposure stimuli, then, it is expected that younger infants might show a familiarity preference where older infants would evince a novelty preference. This interaction of stimulus complexity with the developmental course of looking-time preference has been recruited in discussions of cue-integration within the SL literature (see below), but has not been systematically explored within standard SL segmentation tasks. Rather, any significant pattern, irrespective of the direction, has been taken as evidence for successful segmentation. We will thus examine the literature for evidence of a global shift across development, as well as a shift when stimulus complexity is taken into consideration.
+
+##Stimulus characteristics
+The artificial language stream used in the SAN96 study was synthetic, monotonous, and biologically impossible. This was intentional: the authors wanted to narrow the possible mechanism of learning to a single stimulus property. As the literature has developed, however, studies have probed how the learning mechanism fares when the stimulus becomes less artificial. 
+
+###Word length. 
+Many studies of statistical word segmentation have constructed streams with isomorphic word lengths (e.g., all words are trisyllabic). This feature of the artificial language streams is highly unnatural. There is some evidence, however, that when this isochrony is broken, infants are not able to segment the stream[@johnson2003b;@johnson2010;@lew-williams2012;@mersad2012]. This finding remains unexplained, but may be tied to the prosodic nature of the stimuli – successful learning from non-uniform, fluent, statistically-defined streams with natural intonation contours has been reported[@pelucchi_statistical_2009;@thiessen2005], as well as learning from a non-uniform stream with an embedded familiar word[@mersad2012]. The phenomenon may also be limited to the infant literature[@frank2010modeling]. It is possible, of course, that learning is slowed down, and that small sample sizes have inhibited our ability to detect a relatively small effect. Aggregating across multiple studies may therefore enable us to evaluate this hypothesis, by increasing the power to detect smaller learning effects.   
+
+###Non-statistical cues to segmentation. 
+A robust literature on (non-statistical) word segmentation preceded the findings of SAN96. This literature had revealed that infants actively use a variety of language-specific cues to find words in speech (co-articulation[@curtin2001]; phonotactics[@mattys2001phonotactic]; prosody[@jusczyk1999beginnings]). An early question in the SL literature, therefore, became: when do infants use statistical cues, and when do they use prosodic/segmental cues? In the first test of this question, Johnson and Jusczyk[@johnson_word_2001] found that by 8 months infants preferred language-specific phonetic cues to statistics when forced to make a choice between the two (see Appendix for more details). While subsequent tests of this phenomenon have not always aligned as expected[@thiessen2003;@shukla2011prosody], the general consensus has been that older infants will rely on language-specific structural patterns while younger infants rely more heavily on statistical cues[@hoff2013language]. We evaluate both components of this hypothesis: that infants can use statistical or non-statistical cues to segment a speech stream, and that their preference for one over the other is moderated by infant age.
+
+###Stimuli naturalness. 
+A point of divergence between the nonstatistical and statistical word segmentation literatures is that studies of non TP-based segmentation using natural speech typically find preferences for the familiar words at test[@bergmann2016development]. In contrast, SL word segmentation studies typically find preference for the novel/less familiar stimulus at test. One fundamental difference between these two datasets lies in the nature of the stimuli: naturally produced vs highly artificial speech. Even within the TP-based segmentation literature, however, stimuli vary along this dimension. That is, some studies use synthesized (i.e. computer-generated) speech streams, while others use speech that was naturally produced and recorded in the lab. We examine whether this feature of the signal moderates infant learning outcomes, such that naturally produced speech leads to familiarity preferences, while synthetic speech leads to the field-standard novelty preference.
+
+Tying all these components together, we will therefore use meta-analysis to explore (1) the robustness of infants’ ability to use SL for word segmentation, (2) how this ability develops as infants mature, and (3) how stimulus characteristics impact learning. Our results will call into question standard assumptions of the statistical word segmentation literature, and invite deeper theoretical and practical assessment of current infant research practices.
+
+#Methods#
+##Literature search and inclusion criteria##
+
+We followed the Preferred Reporting Items for Systematic Reviews and Meta-Analyses (PRISMA) guidelines for the selection of studies to include in the meta-analysis[@moher2009preferred]; a flowchart of this process is depicted in Figure 2. To compile a database of relevant studies, we complemented existing lists of studies known to the authors with google scholar searches. Our inclusion criteria were as follows: 
+
+(1) participants must be typically developing infants under 24 months of age;
+(2) experimental design involved familiarization to continuous, unfamiliar/non-native speech characterized by a TP-defined structure;
+(3) the study reported looking-time as measure of learning;
+(4) infants heard low- and high-TP "words" during test.
+
+Three google scholar searches, using the terms “infant/infancy”, or “months/s” and not “visual”  and limited to works that cited SAN96 were conducted (the first two searches were conducted on January 8th & 9th, 2017; a second search limited to articles published since 2015 was conducted on September 10th, 2018). These searches yielded a total of 403 papers, `r length(unique(db$short_cite))` of which met the inclusion criteria (see Table A1 in Appendix). As several experiments are often reported within a single paper (e.g., a comparison of different age groups), there are a larger number of effect sizes that comprise the meta-analysis. In total, we are reporting on experiments testing `r sum(db_table$n_1)` infants between `r min(db_table$Age)` and `r max(db_table$Age)` months, and `r sum(db_table$N_studies)` independent effect sizes.  All infants were tested either in the headturn preference procedure (`r length(db$method[db$method == "HPP"])` experiments) or the central fixation paradigm (`r length(db$method[db$method == "CF"])` experiments; see Appendix for description of this method).
+
+```{r PrismaFig, fig.cap = "The literature review process.", out.width = "\\textwidth", fig.pos = "!h"}
+
+knitr::include_graphics("/Users/alexis/Dropbox/StatLearnDB/figures/PRISMA.pdf")
+```
+
+##Effect size calculation##
+Most behavioural SL studies report infants’ mean looking-times to high TP sequences (“words”) and low TP sequences ("non-words") during test. In the original SAN96 and many follow-up studies, infants looked longer when listening to low TP sequences as compared to high TP sequences (frequently conceived of as a novelty preference); we therefore calculate all statistical measures across the sample such that positive values reflect longer looking to the low TP sequences (a novelty preference) and negative values reflect longer looking to high TP sequences (a familiarity preference). We computed Hedges’ *g*[@morris2000distribution], an unbiased variant of Cohen’s *d*[@cohen2013statistical] that is preferred in the case of small sample sizes.   For `r length(db$HTP_x_1[!is.na(db$HTP_x_1) & db$UniqueStudy == FALSE])` experiments, we could use means and standard deviations, and for `r length(db$t[is.na(db$HTP_x_1) & !is.na(db$t) & db$UniqueStudy == FALSE])` *t*-values. Standard formulae for within-participant designs were employed (see Appendix for details).  
+
+```{r RCitations}
+my_citations <- cite_r(file = "r-references.bib", footnote = TRUE)
+```
+
+##Meta-Analysis##
+To establish the size and variance of the effects, we fitted multivariate random effects models using the R (Version 3.5.2[@R-base]) package metafor[@R-metafor].  Random effects models assume that effect sizes are sampled from a distribution of effect sizes around a particular mean, but model the heterogeneity that is introduced by different study methods and samples as random variation around the true effect. The random effects structure allows us to account for the interdependence between effect sizes from the same paper, as well as situations when the same infants contributed multiple effect sizes (e.g., effect sizes reported by block; *n* = `r nrow(db %>% group_by(same_infant_calc) %>% summarise(n = length(same_infant_calc)) %>% filter(n > 1))`). Finally, the multivariate random effects models also estimate the heterogeneity of variation; when this estimate is significantly different from zero, it indicates that more than one effect is represented in the sample. This measure can thus be used to determine whether the addition of moderators to a particular model is justified. We begin with simple models to evaluate baseline effects of SL, and then will introduce main effects and interactions between the following moderators where justified: (1) age, (2) word length uniformity, (3) non-statistical cues, and (4) natural versus synthetic stimulus type. 
+
+##Bias##
+We employed two means of assessing potential publication bias: funnel plot asymmetry and p-curves. When there is no publication bias, effect sizes should be equally distributed around the mean such that there is a wider spread of effects with lower precision (i.e., higher standard errors) and a narrower spread as the precision increases. Asymmetry of this distribution can be assessed via the rank correlation test (implemented in metafor[@R-metafor]). Publication bias is also indicated by an excess in *p*-values just below the significance threshold of .05, and can be assessed through p-curve analysis[@simonsohn2015better]. To conduct this analysis, we enter all significant exact *t*-values and *F* scores that were reported (*n* = 61 over the entire dataset).
+
+
+##Analysis Organization##
+
+*Original paper* We first report effect size calculations for the SAN96 experiments for a baseline comparison.
+
+*Conceptual replications* We defined a conceptual replication as any study that met our general criteria with two additional constraints. First, we required that the familiarization stream could *only* be segmented via statistical cues (i.e. no other cue either in tandem with or in contrast to transitional probabilities was present). In several studies, statistical metrics such as co-occurrence frequency or mutual information might also be used to segment the speech stream[@aslin1998computation;@swingley2005statistical]. In all cases, however, transitional probabilities are coincident with these alternatives. As we are not currently concerned with the true underlying computational mechanism - but rather the overall robustness and behaviour of the word segmentation statistical learning phenomenon - we refer to transitional probabilities for simplicity. Second, we restricted our analysis to studies with a protocol that did not differ in any fundamental way from the SAN96 protocol. For example, experiments that consist of a priming period prior to familiarization were not included as conceptual replications, nor were experiments that involved a test using novel tokens or sentence frames, rather than test items extracted directly from the speech stream.
+
+*Broader Literature* The broader literature is comprised of all studies represented under the category "conceptual replication" and all additional studies that met our inclusion criteria. This literature thus reflects an array of studies in which infants could use TP cues to segment the stream. These streams are sometimes characterized by alternative cues (such as stressed syllables) that either coincide or contrast with the TPs, or familiarization or testing protocols that diverge in some critical way from the SAN96 design. All studies are coded such that looking preferences reflect looking to the lower TP item at test (irrespective of any additional cues in the stream) A full list of the studies included, their classification (conceptual replication or not), and age ranges of the infants studied can be found in the Appendix.  
+
+#Results#  
+
+##Original Paper##  
+We first calculated the effect size and its variance for the two experiments reported by SAN96. Hedges' *g* was 0.4 (SE = 0.040) for experiment 1 (test trials of high TP "words" and zero TP "non-words") and 0.38 (SE = 0.041) for experiment 2 (test trials of high TP "words" and low TP "part-words"). Compared to other infant studies, this is a medium effect size[@bergmann2018promoting]. If we were to base a future sample size decision on this effect, a sample of 53 infants in a paired design two-sided t-test would be required to achieve 80% power (computed with the R package pwr[@champley2016pwr]. 
+
+##Conceptual Replications##
+```{r DR model}
+library(xtable)
+rma_DR <- rma.mv(g_calc, g_var_calc, data = db_DR, random = ~1| short_cite/same_infant)
+x <- xtable(coef(summary(rma_DR)))
+pow <- power.t.test(n = median(db_DR$n_1[db_DR$UniqueStudy == "TRUE"]), 
+                    sig.level = 0.05,
+                    delta = x$estimate,
+                    power = NULL,
+                    type = "paired",
+                    alternative = "two.sided")
+```
+
+Twenty-five experiments (*n* = `r sum(db_DR$n_1[db_DR$UniqueStudy == "FALSE"])` infants, aged `r min(db_DR$mean_age_months)` to `r max(db_DR$mean_age_months)` months) were categorized as conceptual replications of SAN96. The variance-weighted effect size Hedges' *g* is `r x$estimate` (SE = `r x$se`), which is significantly different from zero (95% CI [`r x$ci.lb`, `r x$ci.ub`], *p* `r format.pval(x$pval, eps = .001)`) and indicates a preference for the low TP sequences. Given the median sample size (in conceptual replications, *n* = `r median(db_DR$n_1[db_DR$UniqueStudy == "TRUE"])` participants), observed power is thus only `r pow$power`. 
+
+```{r p-curve}
+p_DR <- db_DR %>% mutate(pCurveStat = ifelse(!is.na(t), paste0("t(", n_1-1, ")=", t),
+                                             ifelse(!is.na(F), paste0("F(1,", n_1-1, ")=", F), NA))) %>% 
+  select(short_cite, pCurveStat)
+
+write.csv(p_DR, "p_DR.csv")
+#use these values to calculate p-curve stats on p-curve.com
+
+kendDR = ranktest(rma_DR)
+```
+
+*Publication bias*
+The funnel plot shown in Panel A of Figure 3 displays a relatively even distribution of effect sizes around the median, though with slightly greater density of large effect sizes that are of low-precision (lower right quadrant) and some effect sizes that are of high precision but outside the expected distribution (upper left quadrant). Nonetheless, asymmetry is not significant, with Kendall's $\tau$ =  `r kendDR$tau`, *p* = `r format.pval(kendDR$pval, digits = 2)`.  P-curve analysis evaluates the evidential value in the literature through the distribution of reported *p*-values. Using the 14 experiments with reported significant *t*- and *F*-statistics, the p-curve analysis reveals that the distribution is not flat (as would be the case given no evidential value in the literature; *Z* = -0.45, *p* = .32), but it also does not reveal strong evidence for the existence of an effect (the half- and full-tests for right-skew are not both p < .1[@simonsohn2015better]). Using Stouffer's method, the distribution of *p*-values is most consistent with an observed power of 24% (full *p*-curve tables and figures can be found in the Appendix). 
+
+##Moderators##
+Heterogeneity is significant, indicating that a portion of the variance in the data is not explained by random measurement error (Q(25) = 74.65, *p* < .001). In this sample, there are no additional cues that either support or conflict with the TP structure; however, the data do vary on the other three dimensions described in the introduction. Those are age (range from `r min(db_DR$mean_age/30.44)`  to `r max(db_DR$mean_age/30.44)` months), whether the stream consists of uniform (*n* = `r length(db_DR$uniformity[db_DR$uniformity == "yes" & db_DR$UniqueStudy == "FALSE"])`) or mixed (*n* = `r length(db_DR$uniformity[db_DR$uniformity == "no" & db_DR$UniqueStudy == "FALSE"])`) word lengths, and stimuli naturalness (as defined above; `r length(db_DR$StimuliType[db_DR$StimuliType == "0" & db_DR$UniqueStudy == "FALSE"])` experiments with synthesized sounds, `r length(db_DR$StimuliType[db_DR$StimuliType == "1" & db_DR$UniqueStudy == "FALSE"])` experiments with naturally produced sounds). 
+
+```{r models_DR}
+rma_DR_modAge <- rma.mv(g_calc, g_var_calc, data = db_DR, mods = ~age.C, random = ~1| short_cite/same_infant_calc, method = "REML")
+modAge <- xtable(coef(summary(rma_DR_modAge)))
+
+rma_DR_modAgeComplex <- rma.mv(g_calc, g_var_calc, data = db_DR, mods = ~age.C + log10(familiarization_time), random = ~1| short_cite/same_infant_calc, method = "REML")
+
+rma_DR_modUnif <- rma.mv(g_calc, g_var_calc, data = db_DR, mods = ~uniformity, random = ~1| short_cite/same_infant, method = "REML")
+modUnif <- xtable(coef(summary(rma_DR_modUnif)))
+
+rma_DR_modStim <- rma.mv(g_calc, g_var_calc, data = db_DR, mods = ~StimuliType, random = ~1| short_cite/same_infant, method = "REML")
+modStim <- xtable(coef(summary(rma_DR_modStim)))
+
+DR_mods <- rbind(modAge, modUnif, modStim)
+
+DR_mods$`95% CI` <- paste('[', round(DR_mods$ci.lb, digits = 2), ', ', round(DR_mods$ci.ub, digits = 2), ']')
+
+DR_mods$model <- c("Age model","", "Word length model", "", 
+                        "Stimulus type model", "")
+DR_mods$term <- c("intercept (mean age)","moderator Age", "intercept (non-uniform)", "moderator (uniform)", "intercept (synthetic)", "moderator (natural)")
+
+DR_mods <- DR_mods %>% select(model, term, estimate, 'SE' = se, '95% CI', 'z value' = zval, 'p value' = pval)
+rownames(DR_mods) <- NULL
+
+rma_DR_modStim_Intercept <- rma.mv(g_calc, g_var_calc, data = db_DR, mods = ~0 + StimuliType, random = ~1| short_cite/same_infant, method = "REML")
+modIntercept <- xtable(coef(summary(rma_DR_modStim_Intercept)))
+
+```
+###Development.### 
+The moderator test for Age as a linear predictor was non-significant (QM(1) = 0.95, *p* = .33; see Table 1 for model estimates). We note that the sample distribution makes this analysis difficult to interpret: more than half of the studies represented tested 8-month-old infants (17 of the 26), while the remainder are split between 5-6 months (*n* = 4) and 11-15 months (*n* = 5). We further explored whether Age interacted with stimulus complexity. To do so, we operationalized stimulus complexity in terms of log-normalized, total familiarization durations. The moderator test was non-significant (QM(3) = 4.22, *p* = .24; see Table 1 for model estimates). 
+
+###Stimulus characteristics.### 
+
+*Word length uniformity* A subset of studies familiarized infants to artificial streams that consisted of different length high-TP sequences, or word lengths (*n* = 5). There is evidence that non-uniform word lengths in the familiarization stream inhibit task performance.[@johnson2003b;@johnson2010;@lew-williams2012;@mersad2012] The addition of word length uniformity as a moderator, however, does not significantly account for model variance (QM(1) = 0.80, *p* = .37; see Table 1 for model estimates and Figure 3, Panel B for visualization).
+
+*Stimuli naturalness*
+Approximately half of the studies used synthesized speech (*n* = `r length(unique(db_DR$same_infant_calc[db_DR$StimuliType == 0]))`), while the other used naturally produced syllables (*n* = `r length(unique(db_DR$same_infant_calc[db_DR$StimuliType == 1]))`). The moderator model significantly accounts for additional variance (QM(1) = 7.58, *p* = .006), and reveals that synthesized speech is associated with novelty preferences ($\beta$ = `r printnum(modStim$estimate[1], digits = 3)`, SE = `r printnum(modStim$se[1], digits = 3)`, 95% CI [`r printnum(modStim$ci.lb[1], digits = 3)`, `r printnum(modStim$ci.ub[1], digits = 3)`], *p* = `r format.pval(round(modStim$pval[1], digits = 3), eps = .001)`). The negative estimate for naturally produced speech ($\beta$ = `r printnum(modStim$estimate[2], digits = 3)`, SE = `r printnum(modStim$se[2], digits = 3)`, 95% CI [`r printnum(modStim$ci.lb[2], digits = 3)`, `r printnum(modStim$ci.ub[2], digits = 3)`], *p* = `r format.pval(round(modStim$pval[2], digits = 3), eps = .001)`) suggests that the effect of SL in such studies is closer to zero. A moderator model with a zero intercept confirms that the estimate for natural speech is not significantly different from zero ($\beta$ = `r round(modIntercept$estimate[2], digits = 3)`, SE = `r round(modIntercept$se[2], digits = 3)`, 95% CI [`r round(modIntercept$ci.lb[2], digits = 3)`, `r round(modIntercept$ci.ub[2], digits = 3)`], *p* = `r format.pval(round(modIntercept$pval[2], digits = 1), eps = .001)`; see also Figure 3, Panel C).
+
+```{r get figs}
+source("scripts/figs.R")
+```
+
+```{r DRFig, fig.cap = "Panel A shows conceptual replication effect sizes plotted with respect to their estimated standard error. Panels B and C show the estimate and 95% confidence intervals for uniformity and stimulus type moderator analyses, plotted on top of individual study effect sizes, where dot size indicates study weight (inverse variance).", out.width = "\\textwidth", fig.height = 7, echo = FALSE}
+plot(DR_plots)
+#knitr::include_graphics("/Users/alexis/Dropbox/StatLearnDB/figures/DR_plots.pdf")
+```
+
+```{r DR mod table, results = "asis"}
+apa_table(DR_mods, caption = "Moderator models for conceptual replication experiments")
+```
+
+##Interim Discussion##
+In summary, mixed effects meta-analysis of conceptual replications of the seminal work by SAN96 reveals a reliable effect of segmentation of continuous streams of speech via reliance on transitional probabilities. The size of this effect is surprisingly small: across 25 experiments, the Hedges *g* effect size is 0.23, which would suggest only 18% power in a field-standard statistical learning study (i.e., assuming the median sample size of 24 participants). The observed power revealed by the p-curve analysis while slightly higher (24%) is still surprisingly low. We hypothesized, however, that certain factors might moderate these results, pushing infants to demonstrate novelty preferences in certain circumstances but familiarity preferences in others, or reducing overall learning in either direction. To investigate this possibility, we asked whether learning was affected by infant age or stimulus characteristics, including the uniformity of the familiarization stream and stimulus type (synthesized versus natural). Moderator analyses that included age or word length uniformity failed to significantly account for model variance. It is possible that these dimensions do impact statistical learning, but that the effects are small enough that the current dataset is underpowered to detect them; we return to this in the broader literature analysis. Stimulus type, on the other hand, impacted infant behaviour, such that artificially produced speech streams replicated the original effects, while naturally produced streams failed to find significant evidence for statistical learning. This result accords with the hypothesis that the different infant behavioural outcomes between statistical word segmentation studies (which generally yield novelty effects), and non-statistical word-segmentation studies (which generally yield familiarity effects), may derive from the nature of the stimuli (i.e., non-fluent, non-natural speech versus fluent, natural speech, respectively). 
+
+
+##Broader Literature
+```{r rma_all, include = FALSE}
+rma_all <- rma.mv(g_calc, g_var_calc, data=db, random = ~1 | short_cite/same_infant, method = "REML")
+xAll <- xtable(coef(summary(rma_all)))
+```
+
+Next we examine the entire dataset (inclusive of conceptual replications) for evidence of the SL effect and the impact of theoretically predicted moderators. This sample consists of `r length(db$same_infant_calc[db$UniqueStudy == "FALSE"])` unique effect sizes, representing data from `r sum(db$n_1[db$UniqueStudy == "FALSE"])` infants. This broadened view of the infant statistical word segmentation literature includes studies that actively pit non-statistical and statistical cues against each other. While we therefore do not expect to find a consistent effect of SL overall, it is theoretically possible that infants rely more on statistical cues than other cues across age and other stimulus modifications. This hypothetical outcome is not confirmed ($\beta$ = `r xAll$estimate`, *p* = `r xAll$pval`, 95% CI [`r xAll$ci.lb`, `r xAll$ci.ub`]). As expected, this model has significant heterogeneity (Q(102) = 509.31, *p* < .0001). 
+
+```{r p-curve all}
+p_all <- db %>% mutate(pCurveStat = ifelse(!is.na(t), paste0("t(", n_1-1, ")=", t),
+                                             ifelse(!is.na(F), paste0("F(1,", n_1-1, ")=", F), NA))) %>% 
+  select(short_cite, pCurveStat, familiarity)
+
+write.csv(p_all, "p_all.csv")
+#use these values to calculate p-curve stats on p-curve.com
+
+kendAll <- ranktest(rma_all)
+
+#split
+rma_all_noConf <- rma.mv(g_calc, g_var_calc, data=subset(db, cue_conflict_TP == "no"), random = ~1| short_cite/same_infant, method = "REML")
+
+rma_all_Conf <- rma.mv(g_calc, g_var_calc, data=subset(db, cue_conflict_TP == "yes"), random = ~1| short_cite/same_infant, method = "REML")
+
+kendAll_noConf <- ranktest(rma_all_noConf)
+kendAll_Conf <- ranktest(rma_all_Conf)
+
+```
+
+*Publication bias*
+Figure 4 depicts the distribution of study effect sizes around the median (assuming a single underlying effect) as a function of their standard error. As can be seen from this plot, experiment effect sizes are widely dispersed and fall outside of the expected distribution. This dispersion, however, does not appear to be asymmetric, as can occur when there is significant publication  bias (Kendall's $\tau$ =  `r kendAll$tau`, *p* = `r format.pval(kendAll$pval, digits = 2)`). Using the 61 experiments with reported statistically significant *t*- and *F*-statistics, p-curve analysis reveals good evidential value (Full p-curve: *Z* = -4.11, *p* < .0001; Half p-curve: *Z* = -2.06, *p* = .02; see Appendix for figures and subset analyses).
+
+```{r FunnelAllFig, fig.cap = "The top panel displays the broader literature effect sizes plotted with respect to their estimated standard error. Distribution is not significantly asymmetrical. The bottom panel shows study estimates  plotted as a function of the mean age of infants. The estimated linear slope +/- 1 standard error is plotted in gray.", out.width = "\\textwidth", fig.pos = "!h", fig.height = 7, echo = FALSE}
+FP2_Age2
+```
+
+##Moderators
+
+```{r age model, echo = FALSE, include = FALSE}
+rma_age = rma.mv(g_calc, g_var_calc, mods = ~ age.C, data = db, random = ~1| short_cite/same_infant)
+all_age <- xtable(coef(summary(rma_age)))
+
+rma_complex = rma.mv(g_calc, g_var_calc, mods = ~ log10(familiarization_time) + age.C, data = db, random = ~1| short_cite/same_infant)
+```
+###Development.
+Effect sizes are distributed between the ages of 5 to 18.5 months. A model with linear age as moderator does not significantly explain model variance (QM(1) = .84, *p* = .36; see Table 2 and Figure 4, Panel B). It is possible, however, that a failure to detect differences over development is due to inherent differences in the degree of complexity that younger and older infants are exposed to. A model specified for age controlling for familiarization duration, however, also does not explain significant variance (QM(2) = 1.64, *p* = .44) (see Appendix for additional analyses). 
+
+###Stimulus characteristics.  
+
+```{r uniform model, echo = FALSE, include = FALSE}
+db$uniformity[db$uniformity == ""] <- NA
+db$uniformity <- droplevels(db$uniformity)
+rma_uniform = rma.mv(g_calc, g_var_calc, mods = ~ uniformity, data = db, random = ~1| short_cite/same_infant)
+all_uniform <- xtable(coef(summary(rma_uniform)))
+
+rma_uniform_Intercept = rma.mv(g_calc, g_var_calc, mods = ~ 0 + uniformity, data = db, random = ~1| short_cite/same_infant)
+uniInt <- xtable(coef(summary(rma_uniform_Intercept)))
+```
+*Word length uniformity* 
+Seventy-four experiments were constructed with uniform streams while `r length(unique(db$same_infant_calc[db$uniformity == "no"]))` contained non-uniform streams. This difference significantly moderates the SL effect (QM(1) = 11.21, *p* < .001; Table 2). A moderator model with a null intercept reveals that uniform streams yield positive effect sizes (i.e., novelty effects; $\beta$ = `r round(uniInt$estimate[2], digits = 2)`, *p* < `r format.pval(uniInt$pval[2], eps = .001)`), while non-uniform streams trend in the direction of familiarity effects ($\beta$ = `r round(uniInt$estimate[1], digits = 2)`, *p* = `r format.pval(uniInt$pval[1], digits = 1, eps = .001)`).
+
+```{r additional cue model, echo = FALSE}
+db$additional_cue_fact <- factor(ifelse(db$additional_cue != "none", "yes", "no"))
+rma_cue = rma.mv(g_calc, g_var_calc, mods = ~ additional_cue_fact, data = db, random = ~1| short_cite/same_infant)
+all_cue <- xtable(coef(summary(rma_cue)))
+
+rma_cue_Intercept = rma.mv(g_calc, g_var_calc, mods = ~ 0 + additional_cue_fact, data = db, random = ~1| short_cite/same_infant)
+```
+
+*Non-statistical cues*
+Simply having a cue in addition to the TP structure - whether that cue conflicts or coincides with the TP structure - significantly impacts the effect (QM(1) = 4.72, *p* = 0.03; Table 2): only those studies with no additional cues reveal significant effects of learning (see Table 2 for intercept model estimates). This is not surprising, because a proportion of the studies with an additional cue consist of *conflicting* TP cases. Twenty-six experiments pit a non-TP cue (such as stress) against the TP structure, while `r length(unique(db$same_infant_calc[db$cue_conflict_TP == "no" & db$additional_cue != "none"]))` contain an additional cue that does not conflict with the TP structure. The literature would predict that infants will learn from the coincident statistical and non-statistical structure streams per usual, but that we might see various learning/failure to learn effects from streams with conflicting TP and non-TP cues. 
+```{r cue_conflict_model}
+db$cue_conflict_TP = droplevels(db$cue_conflict_TP)
+rma_cue_conflict = rma.mv(g_calc, g_var_calc, mods = ~ cue_conflict_TP, data = db, random = ~1| short_cite/same_infant)
+
+all_cue_conflict <- xtable(coef(summary(rma_cue_conflict)))
+```
+
+```{r cue_confict_restricted_model}
+rma_cue = rma.mv(g_calc, g_var_calc, mods = ~cue_conflict_TP, data = subset(db, TPvsCue == "yes"), random = ~1| short_cite/same_infant)
+```
+
+This division of the dataset, however, does not significantly impact the distribution of effects (QM(1) = .18, *p* = .7). We hypothesized that perhaps studies that actively pit two cue types (e.g., stress versus TPs) against each other represent a more concise, narrow set of manipulations, while studies that contain other cues, but not as a specific manipulation of that cue, are more variable. To investigate, we restricted the analysis to just those papers that explicitly pitted TPs against other cues (*n* = `r length(db$TPvsCue[db$TPvsCue == "yes"])`). In this case, there are `r length(db$TPvsCue[db$TPvsCue == "yes" & db$cue_conflict_TP == "yes"])` effect sizes reflecting prosodic cues that conflict with TP structure and `r length(db$TPvsCue[db$TPvsCue == "yes" & db$cue_conflict_TP == "no"])` effect sizes reflecting experiments with aligned prosodic and TP cues. The moderator test is not significant, suggesting that this breakdown of the data does not explain the variance in effects (QM(1) = 0.07, *p* = 0.8). 
+
+*Age and cue-conflict interaction*
+
+```{r age cue conflict model}
+rma_age_cue = rma.mv(g_calc, g_var_calc, mods = ~ age.C, data = subset(db, cue_conflict_TP == "yes"), random = ~1| short_cite/same_infant)
+
+all_ageXcue = xtable(coef(summary(rma_age_cue)))
+```
+It is predicted that as infants develop, they will increasingly rely on language-specific cues instead of statistical. To examine this, we restricted an age model to just those experiments in which a language-specific, non-statistical cue conflicts with the statistical structure (*n* = 26). In this case, studies should show novelty preferences (indicating segmentation of the stream using statistics) earlier in development, and familiarity preferences (indicating segmentation of the stream using linguistic cues) later in development. This hypothesis is not supported (QM(1) = .27, *p* = .60; Table 2). 
+
+*Stimuli naturalness*
+```{r stimuli type all, include = FALSE}
+rma_Stim = rma.mv(g_calc, g_var_calc, mods = ~StimuliType, data = db, random = ~1| short_cite/same_infant)
+all_Stim <- xtable(coef(summary(rma_Stim)))
+
+rma_Stim_Intercept = rma.mv(g_calc, g_var_calc, mods = ~0 + StimuliType, data = db, random = ~1| short_cite/same_infant)
+stimIntercept <- xtable(coef(summary(rma_Stim_Intercept)))
+
+#coartic
+rma_Stim = rma.mv(g_calc, g_var_calc, mods = ~StimuliType, data = subset(db, fam_lang_coarticulation == "yes"), random = ~1| short_cite/same_infant)
+```
+
+As in the conceptual replications analysis, stimulus type significantly impacts the statistical learning effect (QM(1) = 18.91, *p* < .0001). Artificially synthesized speech (n = `r length(unique(db$same_infant_calc[db$StimuliType == "0"]))` experiments) reliably produces novelty preferences ($\beta$ = `r round(stimIntercept$estimate[1], digits = 3)`, *p* < .0001), indicating successful segmentation by statistical cues. The effect of naturally produced speech stimuli (n = `r length(unique(db$same_infant_calc[db$StimuliType == "1"]))` experiments), on the other hand, trended in the direction of a familiarity preference ($\beta$ = `r round(stimIntercept$estimate[2], digits = 3)`, *p* = `r format.pval(stimIntercept$pval[2], eps = .0001, digits = 2)`).
+It is additionally possible within this dataset to characterize the data in terms of synthesized speech, naturally produced speech (but non-fluent), and naturally produced, fluent speech. In other words, among those studies that have thus far been categorized as 'naturally produced speech', a proportion employed streams of monotone syllables with no acoustic breaks/contours. A second group of studies, however, used streams of syllables produced in a fluent, speech-like fashion (e.g., with IDS intonation and broken in to sentence-like chunks). We term these two sets non-fluent natural speech (*n* = `r length(unique(db$same_infant_calc[db$ThreeWayStim == "1"]))`) and fluent natural speech (*n* = `r length(unique(db$same_infant_calc[db$ThreeWayStim == "2"]))`). 
+
+```{r ThreeWayModel, include = FALSE}
+rma_3way <- rma.mv(g_calc, g_var_calc, mods = ~0 + ThreeWayStim, data = db, random = ~1| short_cite/same_infant)
+#summary(rma_3way)
+```
+A meta-analytic model with the 3-level factor as moderator reveals significant novelty effects for synthetically produced stimuli, no effect for non-fluent natural stimuli, and a significant familiarity effect for fluent natural stimuli (see Figure 5 and inset table). 
+
+```{r all mods table, results = "asis"}
+all_mods <- rbind(all_age, all_uniform, all_cue, all_cue_conflict, all_ageXcue, all_Stim)
+
+all_mods$`95% CI` <- paste('[', round(all_mods$ci.lb, digits = 2), ', ', round(all_mods$ci.ub, digits = 2), ']')
+
+all_mods$model <- c("Age model", "", "Word length model","", "Additional Cue model", "", 
+                        "Cue conflict model", "", "Age X Cue conflict model", "", "Stimulus type model", "")
+all_mods$term <- c("intercept (mean age)","moderator Age", "intercept (non-uniform)", "moderator (uniform)", "intercept (only TPs)", "moderator (additional cue)", "intercept (no cue conflict)", "moderator (cue conflict)", "intercept (mean age)", "moderator (age)", "intercept (synthetic)", "moderator (natural)")
+
+all_mods <- all_mods %>% select(model, term, estimate, 'SE' = se, '95% CI', 'z value' = zval, 'p value' = pval)
+rownames(all_mods) <- NULL
+
+apa_table(all_mods, caption = "Model estimates for moderator analyses across broader literature", landscape = TRUE)
+```
+
+
+```{r ThreeWayFig, fig.cap = "Statistical learning as a function stimulus construction type (entire dataset). Inset table shows model estimates from the 3-way stimulus moderator model.", out.width = "\\textwidth", fig.height = 5, fig.pos = "!h"}
+
+ThreeWayFigPanels
+```
+
+# Discussion
+The capacity to induce structure by tuning to statistical distributions embedded in perceptual input is thought to underpin early learning processes. Nowhere, however, has this phenomenon been more elaborated upon than in the word segmentation literature. The meta-analysis presented herein reveals that studies hewing closely to the original study by Saffran, Aslin, and Newport[@saffran1996statistical] yield the expected effect: infants show significantly more interest in the test items with lower internal statistical coherence, thus indicating segmentation of the speech stream by attuning to its statistical structure. Our analysis also raises a number of questions that we address below.  
+
+Our first goal was to determine the robustness of the statistical word segmentation effect. We find a meta-analytic Hedges’ *g* effect size of 0.36 for those studies that yield the most robust evidence of learning, given our moderator analyses (in other words, studies that use synthetic stimuli, no additional cues, and no major paradigmatic shifts from the original Saffran et al., 1996 design). Assuming the standard analytic approach in the literature (i.e., a paired-sample two-tailed t-test), studies would need a final sample of 63 infants to detect a statistically significant effect at least 80% of the time. However, the median sample size across the literature as reviewed in the present meta-analysis is 21 infants. Assuming the conditions in which we find the most robust SL effect, then, 65% of attempted studies should fail. Only 14% of the relevant experiments reported non-significant results. And yet, we have also found no evidence for publication bias. How can we account for this mismatch?  
+
+One possibility is that the assumptions of the meta-analysis are flawed in some way, causing an underestimate of the underlying effect. We consider two possible causes that would produce this effect, both relating to the vagaries of looking-time as a dependent measure. First, in the studies reported on here, infants are tested for an overall preference for “words” or “non-words” (high- and low-TP items, respectively). Either preference, however, can be interpreted as evidence of learning. By preserving the direction of effects across our sample, we have thus diluted the strength of the effect by treating the reported preferences as points along a continuum, rather than a single (i.e., absolute value) reference to learning.  
+
+Treating looking-time scores without reference to their direction of preference, however, is flawed both statistically and theoretically. The function of meta-analysis is to derive the average/median effect across studies investigating that effect[@gelman2014beyond; @bergmann2019s]. In the absence of biases, studies reflect (pseudo)-randomly drawn experiments around this median, with some studies undershooting and others overshooting the effect. To take an extreme, we might imagine that there is, in fact, no statistical learning effect at all. What then, should the randomly drawn studies display? A subset will have novelty preferences, and a subset will have familiarity preferences, some of which will be significant (particularly in the presence of low power, leading to larger deviation from the true effect[@gelman2014beyond; @bergmann2019s]). Aggregated, the underlying null effect is revealed when this directionality of preference is maintained. However, were we to take the absolute value, we might erroneously find a significant, positive effect. Clearly, this situation is to be avoided. 
+
+Discarding the directionality of preference is also theoretically flawed: the SL word segmentation literature actively recruits different looking-time preferences as an indication of a different kind of segmentation process (e.g., relying on statistical versus non-statistical cues[@johnson_word_2001]) or different stages of learning. Preserving this dichotomy allows us to examine the validity of these predictions.
+
+There is a second potential concern with the current meta-analytic approach. We have relied on continuous measures of looking-time, which implicitly assumes that graded differences in the strength of looking-preference reflects stronger/weaker segmentation skills. This is in accord with the literature: all of the experiments included in our analysis originally reported statistical analyses that rely on continuous looking data (e.g., *t*-tests). However, the underlying assumption that the strength of preference can be directly linked to the degree of learning is not universally accepted in the infant literature[@saffran2018infant].
+
+An alternative to relying on continuous looking times is calculating effects in terms of the proportion of infants that demonstrate learning (defined in the literature as displaying a preference in the dominant direction). In our sample, 70 out of 99 unique experiments report the proportion of infants showing a looking-time preference. In the conceptual replications (*n* = 16), we find that  57% of infants across all studies show a novelty preference, which is not statistically different from chance ($\beta$ = .30, 95% CI = [-.12, .71], *p* = .16). We conducted the same analysis in the broader sample, but restricted to those studies with no conflicting non-TP cue (so as not to artificially reduce the effect; *n* = 52), which revealed a 50% chance that infants will show a novelty preference ($\beta$ = .01, 95% CI = [-.24, .26], p = .93). Clearly, this approach does not support the hypothesis that treating the underlying data as continuous rather than categorical has led to underinflation. Rather, it would appear either that proportion-based measures of looking-time preference are statistically noisier than continuous-based measures, or – less appealingly – that the statistical word segmentation effect may not be real. It should be noted, of course, that not all papers report the proportion of infants showing an effect. We therefore urge researchers to include this information in future work, for continued evaluation of this important theoretical question.
+
+Our analysis thus presents a puzzle: we find no publication bias, but an estimated power that is too low to yield the existing literature. Two recent meta-analyses on infant language processing have found similarly low meta-analytic effect sizes and estimated power. Cristia[@cristia2018can] finds an effect size of Hedges' *g* = 0.26 for infants' ability to deduce phonological categories from phonetic distributions, while Rabagliati et al[@rabagliati2019profile] find *g* = 0.29 for infants' capacity to learn rules (as compared to our finding of *g* = `r x$estimate` for conceptual replications of SAN96). The convergence across these tasks and linguistic domains is intriguing. It may suggest that these tasks are united by similar underlying cognitive mechanisms. Alternatively, it may indicate that infant looking-preference methods are noisy and limit our ability to systematically detect/estimate larger effects.
+
+Our second aim was to test whether literature generated moderators might enhance, reduce, or otherwise alter the statistical learning effect. For instance, as infants develop, they are thought to increasingly ignore statistical in favor of language-specific cues for word segmentation. We did not find evidence for this pattern. In fact, we found no consistent effect for studies in which artificial languages contained additional cues, whether those cues conflicted with the statistics or not. On the other hand, the data may suggest that stimulus complexity impacts learning. For example, within the broader literature sampled, we found that infants learn differently from streams with non-uniform and uniform word lengths. The most basic statistical learning proposal – i.e., that learners are calculating transitional probabilities between syllables – would not predict a difference in complexity between uniform and non-uniform speech streams. However, there is great debate over the exact nature of the underlying computational mechanisms at play[@christiansen2018implicit]. We note here that under some accounts, non-uniform word lengths pose a more complex learning task for the learner – and that the looking-preference results heuristically align with current looking-time theory[@kidd2014goldilocks].  
+
+Only one moderator consistently impacted learning outcomes. Studies that used synthetic stimuli reproduced the original effect, while those with naturally produced stimuli did not. This pattern of results does not, however, explain *why* the different stimuli provoke different behaviors. Indeed, it is somewhat puzzling, since the majority of studies with naturally produced streams are still highly unnatural (i.e., syllables that have been heavily normalized, spliced, and concatenated). It is therefore reasonable to ask: is there some other factor that (accidentally) correlates with the stimuli division, and would better explain the observed effect? We explored two possible confounds: (1) whether labs systematically report the same direction/magnitudes of looking preference (suggesting lab-based, not stimulus-based effects), and (2) whether presence/lack of co-articulation better explains the spread of looking-time preferences. Details are reported in the Appendix; in both cases, however, we find that stimulus naturalness maintains as the critical moderator explaining effect size variance. Moreover, we have found that studies with coarticulated, fluent, natural speech yield significant familiarity preferences – the opposite looking-preference pattern. This may suggest that whatever the relevant acoustic feature is, it is one that lies on a continuum in terms of its effect on infant perception and learning. We suggest that, again, this feature might be best described as stimulus complexity. Stimulus complexity is an area of research that has not been well mapped out in the infant SL literature. We believe that work targeted at the basic relationship between exposure duration, computational demands, stimulus features, and looking-time preferences is an important direction for future research.
+
+Taken together, then, we have found stable evidence for statistical word segmentation, but only when stimuli are highly unnatural and pared down to statistical cues alone. The robustness of the SL effect is much lower than would be expected given the extent of and success rate in the literature. We have speculated that this mismatch derives from current limitations in theories of infant looking-time and stimulus complexity. The convergence of our meta-analytic results with assessments of SL beyond the infant word segmentation literature is informative. Adult word segmentation is a robust and reliable phenomenon[@hartshorne2019meta]; however, there is limited support for more subtle SL processes[@hartshorne2019meta;@cristia2018can], and limited support for the viability of standard adult SL tasks to reliably detect individual differences in learning[@siegelman2015statistical;@siegelman2017measuring]. And yet, theories of human learning and development increasingly rely on statistical learning processes at every stage of learning[@frost2019statistical]. Moreover, SL has begun to influence clinical practice and diagnosis criteria. The results of this meta-analysis caution that these leaps in theory and practice may be premature. Undoubtedly, infants and adults alike are sensitive to some statistics in some contexts. Understanding how, when, and to what extent this phenomenon motivates cognitive and perceptual development will require deeper investment in the methodological and theoretical bases of infant cognitive science.
+
+#Data Availability Statement
+The data that have been used to generate this analysis have been deposited in XXX github. A publicly modifiable version of the database is also available at http://metalab.stanford.edu/dataset/statSeg.html.
+
+#Code Availability Statement
+The manuscript and all code used to generate the analyses has been written in RMarkdown and can be found at XXX github repo.
+
+# References
+```{r create_r-references}
+r_refs(file = "r-references.bib")
+r_refs(file = "my-bib.bib")
+```
+
+\begingroup
+\setlength{\parindent}{-0.5in}
+\setlength{\leftskip}{0.5in}
+
+<div id = "refs"></div>
+\endgroup
